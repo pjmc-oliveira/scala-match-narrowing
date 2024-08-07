@@ -444,6 +444,7 @@ private sealed trait YSettings:
   val YccNew: Setting[Boolean] = BooleanSetting(ForkSetting, "Ycc-new", "Used in conjunction with captureChecking language import, try out new variants (debug option)")
   val YccLog: Setting[Boolean] = BooleanSetting(ForkSetting, "Ycc-log", "Used in conjunction with captureChecking language import, print tracing and debug info")
   val YccPrintSetup: Setting[Boolean] = BooleanSetting(ForkSetting, "Ycc-print-setup", "Used in conjunction with captureChecking language import, print trees after cc.Setup phase")
+  val YmatchNarrow: Setting[Boolean] = BooleanSetting(ForkSetting, "Ymatch-narrow", "Enable narrowing in pattern matching.")
 
   /** Area-specific debug output */
   val YexplainLowlevel: Setting[Boolean] = BooleanSetting(ForkSetting, "Yexplain-lowlevel", "When explaining type errors, show types at a lower level.")

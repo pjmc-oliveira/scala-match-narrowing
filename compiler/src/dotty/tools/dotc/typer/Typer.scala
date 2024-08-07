@@ -2112,7 +2112,7 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
     var alreadyStripped = false
     val cases1 = tree.cases.zip(pt.cases)
       .map { case (cas, tpe) =>
-        val case1 = typedCase(cas, sel, wideSelType, tpe)(using caseCtx)
+        val case1 = typedCase(cas, sel, wideSelType, wideSelType, tpe)(using caseCtx)
         caseCtx = Nullables.afterPatternContext(sel, case1.pat)
         if !alreadyStripped && Nullables.matchesNull(case1) then
           wideSelType = wideSelType.stripNull()
@@ -2130,18 +2130,110 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
     assignType(cpy.Match(tree)(sel, cases1), sel, cases1)
   }
 
-  def typedCases(cases: List[untpd.CaseDef], sel: Tree, wideSelType0: Type, pt: Type)(using Context): List[CaseDef] =
-    var caseCtx = ctx
-    var wideSelType = wideSelType0
-    var alreadyStripped = false
-    cases.mapconserve { cas =>
-      val case1 = typedCase(cas, sel, wideSelType, pt)(using caseCtx)
-      caseCtx = Nullables.afterPatternContext(sel, case1.pat)
-      if !alreadyStripped && Nullables.matchesNull(case1) then
-        wideSelType = wideSelType.stripNull()
-        alreadyStripped = true
-      case1
+  /**
+    * Narrow a type by removing a type from an OrType.
+    * narrowType(OrType(A1, B), A2) = B iff A1 <: A2
+    *
+    * @param target
+    * @param matched
+    */
+  def narrowType(target: Type, cas: Tree)(using Context): Type =
+
+    def alwaysMatches(pat: Tree): Boolean = trace(i"alwaysMatches(pat = $pat)") {
+      pat match
+        case id: Ident =>
+          assert(id.name.isTermName)
+          val res = untpd.isVarPattern(id)
+          res
+        case Select(_, _)                          => false
+        case Bind(_, pat)                          => alwaysMatches(pat)
+        case Typed(pat, tpt) if target <:< tpt.tpe => alwaysMatches(pat) // TODO: Compare types?
+        case _                                     => false
     }
+
+    def narrowedType: Type = {
+      // TODO: Should this be widen? or not?
+      //       Don't widen if `case TRUE`, i.e. if we have a case object
+      val casType = cas.tpe // TODO: Should this be done in a `case Ident(_) => ...`?
+      target match {
+        case _ if target <:< casType => defn.NothingType
+        case OrType(tp1, tp2) if tp1 <:< casType => narrowType(tp2, cas)
+        case OrType(tp1, tp2) if tp2 <:< casType => narrowType(tp1, cas)
+        // Recurse on both sides
+        case OrType(tp1, tp2)  => (narrowType(tp1, cas) | narrowType(tp2, cas))
+        case AndType(tp1, tp2) => (narrowType(tp1, cas) & narrowType(tp2, cas))
+        case t => t
+      }
+    }
+
+    cas match {
+      case UnApply(fun, _, pats) if
+          fun.symbol.name != nme.unapplySeq
+          && pats.forall(alwaysMatches) =>
+        narrowedType
+      case id: Ident if !untpd.isVarPattern(id)  => narrowedType
+      case Bind(_, pat)                          => narrowType(target, pat)
+      case Typed(pat @ UnApply(_, _, _), _)      => narrowType(target, pat)
+      case Typed(pat, tpt) if alwaysMatches(pat) => narrowedType
+      case _ if alwaysMatches(cas)           => defn.NothingType
+      case _ => target
+    }
+
+  /**
+    * Decompose a class type into its children.
+    *
+    * @param target The type to decompose
+    */
+  def decomposeClass(target: Type)(using Context): Type =
+      import transform.patmat.SpaceEngine.isDecomposableToChildren
+
+      val tp = target
+      if tp.isDecomposableToChildren then
+        val refined =
+          // Get all children of the class
+          tp.classSymbol.children
+          // Refine child based on parent
+          // TODO: Maybe used .collect to avoid traversing the list multiple times
+          .map { child => TypeOps.refineUsingParent(tp, child) }
+          // Filter out children that are not subtypes of the target
+          .filter(child => child != NoType)
+
+        val res =
+          if refined.isEmpty
+          // TODO: Not sure if this is the correct behaviour
+          // If no children are subtypes of the target, return the target
+          then tp
+          else refined.reduce((x, y) => OrType(x, y, true))
+
+        TypeOps.wildcardToTypeBounds(res) // TODO: Should this be done after typer globally? Might be ok...
+      else
+        tp
+
+  def typedCases(cases: List[untpd.CaseDef], sel: Tree, wideSelType0: Type, pt: Type)(using Context): List[CaseDef] =
+    if ctx.settings.YmatchNarrow.value then
+      var caseCtx = ctx
+      val wideSelType = wideSelType0
+      var narrowedSelType: Type = decomposeClass(wideSelType)
+      var alreadyStripped = false
+      cases.mapconserve { cas =>
+        val case1 = typedCase(cas, sel, wideSelType, narrowedSelType, pt)(using caseCtx)
+        caseCtx = Nullables.afterPatternContext(sel, case1.pat)
+        if cas.guard.isEmpty then
+          narrowedSelType = narrowType(narrowedSelType, case1.pat)
+        case1
+      }
+    else
+      var caseCtx = ctx
+      var wideSelType = wideSelType0
+      var alreadyStripped = false
+      cases.mapconserve { cas =>
+        val case1 = typedCase(cas, sel, wideSelType, wideSelType, pt)(using caseCtx)
+        caseCtx = Nullables.afterPatternContext(sel, case1.pat)
+        if !alreadyStripped && Nullables.matchesNull(case1) then
+          wideSelType = wideSelType.stripNull()
+          alreadyStripped = true
+        case1
+      }
 
   /** - strip all instantiated TypeVars from pattern types.
     *    run/reducable.scala is a test case that shows stripping typevars is necessary.
@@ -2180,7 +2272,7 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
   }
 
   /** Type a case. */
-  def typedCase(tree: untpd.CaseDef, sel: Tree, wideSelType: Type, pt: Type)(using Context): CaseDef = {
+  def typedCase(tree: untpd.CaseDef, sel: Tree, wideSelType: Type, narrowedSelType: Type, pt: Type)(using Context): CaseDef = {
     val originalCtx = ctx
     val gadtCtx: Context = ctx.fresh.setFreshGADTBounds.setNewScope
 
@@ -2204,10 +2296,17 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
       assignType(cpy.CaseDef(tree)(pat1, guard1, body1), pat1, body1)
     }
 
-    val pat1 = typedPattern(tree.pat, wideSelType)(using gadtCtx)
-    caseRest(pat1)(
-      using Nullables.caseContext(sel, pat1)(
-        using gadtCtx))
+    if ctx.settings.YmatchNarrow.value then
+      val andType = AndType(wideSelType, narrowedSelType)
+      val pat1 = typedPattern(tree.pat, andType)(using gadtCtx)
+      caseRest(pat1)(
+        using Nullables.caseContext(sel, pat1)(
+          using gadtCtx))
+    else
+      val pat1 = typedPattern(tree.pat, wideSelType)(using gadtCtx)
+      caseRest(pat1)(
+        using Nullables.caseContext(sel, pat1)(
+          using gadtCtx))
   }
 
   def typedLabeled(tree: untpd.Labeled)(using Context): Labeled = {

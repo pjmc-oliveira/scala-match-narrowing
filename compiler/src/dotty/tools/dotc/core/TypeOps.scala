@@ -712,6 +712,19 @@ object TypeOps:
     violations.toList
   }
 
+  def wildcardToTypeBounds(tp: Type)(using Context): Type = {
+
+    val typeMap = new TypeMap {
+      def apply(tp: Type): Type = tp match {
+        case tp: WildcardType => tp.optBounds
+        case _                => mapOver(tp)
+      }
+    }
+
+    typeMap(tp)
+
+  }
+
   /** Refine child based on parent
    *
    *  In child class definition, we have:

@@ -661,9 +661,9 @@ object TreeChecker {
         tpdTree
       }
 
-    override def typedCase(tree: untpd.CaseDef, sel: Tree, selType: Type, pt: Type)(using Context): CaseDef =
+    override def typedCase(tree: untpd.CaseDef, sel: Tree, wideSelType: Type, narrowSelType: Type, pt: Type)(using Context): CaseDef =
       withPatSyms(tpd.patVars(tree.pat.asInstanceOf[tpd.Tree])) {
-        super.typedCase(tree, sel, selType, pt)
+        super.typedCase(tree, sel, wideSelType, narrowSelType, pt)
       }
 
     override def typedClosure(tree: untpd.Closure, pt: Type)(using Context): Tree = {

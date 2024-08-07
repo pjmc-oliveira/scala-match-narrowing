@@ -56,6 +56,14 @@ class CompilationTests {
     aggregateTests(tests*).checkCompile()
   }
 
+  @Test def matchNarrow: Unit = {
+    implicit val testGroup: TestGroup = TestGroup("matchNarrow")
+    val options = defaultOptions.and("-Ymatch-narrow")
+    aggregateTests(
+      compileFilesInDir("tests/pos/matchNarrow", options),
+    ).checkCompile()
+  }
+
   @Test def rewrites: Unit = {
     implicit val testGroup: TestGroup = TestGroup("rewrites")
 

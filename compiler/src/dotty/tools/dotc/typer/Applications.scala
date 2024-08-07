@@ -1607,6 +1607,8 @@ trait Applications extends Compatibility {
         val ownType =
           if selType <:< unapplyArgType then
             unapp.println(i"case 1 $unapplyArgType ${ctx.typerState.constraint}")
+            if ctx.settings.YmatchNarrow.value then
+              withMode(Mode.GadtConstraintInference)(TypeComparer.constrainPatternType(unapplyArgType, selType))
             fullyDefinedType(unapplyArgType, "pattern selector", tree.srcPos)
             selType.dropAnnot(defn.UncheckedAnnot) // need to drop @unchecked. Just because the selector is @unchecked, the pattern isn't.
           else

@@ -1044,6 +1044,10 @@ class TypeComparer(@constructorOnly initctx: Context) extends ConstraintHandling
           }
         }
         compareHKLambda
+      case tp1 @ AndType(tp11, tp12) if ctx.settings.YmatchNarrow.value && provablyDisjoint(tp11, tp12) =>
+        // If tp11 and tp12 are provably disjoint, then tp1 is empty and thus a subtype of any other type.
+        // TODO: Can cause infinite loops (i9781.scala)?
+        true
       case tp1 @ AndType(tp11, tp12) =>
         val tp2a = tp2.dealiasKeepRefiningAnnots
         if (tp2a ne tp2) // Follow the alias; this might avoid truncating the search space in the either below
@@ -1054,12 +1058,12 @@ class TypeComparer(@constructorOnly initctx: Context) extends ConstraintHandling
         // `&' types to the left of <: are problematic, because
         // we have to choose one constraint set or another, which might cut off
         // solutions. The rewriting delays the point where we have to choose.
-        tp11 match {
+        tp11.dealias match {
           case OrType(tp111, tp112) =>
             return recur(AndType(tp111, tp12), tp2) && recur(AndType(tp112, tp12), tp2)
           case _ =>
         }
-        tp12 match {
+        tp12.dealias match {
           case OrType(tp121, tp122) =>
             return recur(AndType(tp11, tp121), tp2) && recur(AndType(tp11, tp122), tp2)
           case _ =>
@@ -3025,10 +3029,18 @@ class TypeComparer(@constructorOnly initctx: Context) extends ConstraintHandling
          * `disjointnessBoundary`).
          * See tests/pos/provably-disjoint-infinite-recursion-1.scala for an example.
          */
-        tp.derivedAppliedType(
-          tycon,
-          targs.mapConserve(_.stripAnnots(keep = _.symbol.derivesFrom(defn.RefiningAnnotationClass)))
-        )
+        if ctx.settings.YmatchNarrow.value then
+          // NOTE: stripLazeRefs to avoid infinite loops. But, can it occur in other ways?
+          // TODO: Is this needed?
+          tp.derivedAppliedType(
+            tycon,
+            targs.mapConserve(_.stripLazyRef.stripAnnots(keep = _.symbol.derivesFrom(defn.RefiningAnnotationClass)))
+          )
+        else
+          tp.derivedAppliedType(
+            tycon,
+            targs.mapConserve(_.stripAnnots(keep = _.symbol.derivesFrom(defn.RefiningAnnotationClass)))
+          )
       case tp: TermRef =>
         val isEnumValue = tp.termSymbol.isAllOf(EnumCase, butNot = JavaDefined)
         if isEnumValue then tp
