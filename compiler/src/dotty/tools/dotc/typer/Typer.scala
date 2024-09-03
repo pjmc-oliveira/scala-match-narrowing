@@ -2195,16 +2195,31 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
   def decomposeClass(target: Type)(using Context): Type =
       import transform.patmat.SpaceEngine.isDecomposableToChildren
 
+      def childrenOf(tp: Type): Seq[Type] = trace(s"childrenOf($tp)") {
+        if tp.isDecomposableToChildren then
+          val refined = tp
+            // Get all children of the class
+            .classSymbol.children
+            // Refine child based on parent
+            // TODO: Maybe used .collect to avoid traversing the list multiple times
+            .map { child => TypeOps.refineUsingParent(tp, child) }
+            // Filter out children that are not subtypes of the target
+            .filter(child => child != NoType)
+
+          if refined.length == 1 && refined.head =:= tp then
+            // If `tp` only decompose to itself, then terminate
+            refined
+          else
+            // Otherwise, recurse on children of `tp`
+            refined.flatMap(childrenOf)
+        else
+          Seq(tp)
+      }
+
       val tp = target
       if tp.isDecomposableToChildren then
-        val refined =
-          // Get all children of the class
-          tp.classSymbol.children
-          // Refine child based on parent
-          // TODO: Maybe used .collect to avoid traversing the list multiple times
-          .map { child => TypeOps.refineUsingParent(tp, child) }
-          // Filter out children that are not subtypes of the target
-          .filter(child => child != NoType)
+
+        val refined = childrenOf(tp)
 
         val res =
           if refined.isEmpty
