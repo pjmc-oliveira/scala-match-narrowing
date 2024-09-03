@@ -2137,9 +2137,9 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
     * @param target
     * @param matched
     */
-  def narrowType(target: Type, cas: Tree)(using Context): Type =
+  def narrowType(target: Type, cas: Tree)(using Context): Type = trace(s"narrowType($target, $cas)") {
 
-    def alwaysMatches(pat: Tree): Boolean = trace(i"alwaysMatches(pat = $pat)") {
+    def alwaysMatches(pat: Tree): Boolean = trace(s"alwaysMatches(pat = $pat)") {
       pat match
         case id: Ident =>
           assert(id.name.isTermName)
@@ -2166,18 +2166,26 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
       }
     }
 
+    def qualifierIsIdent(qualifier: Tree): Boolean = qualifier match {
+      case Ident(_)     => true
+      case Select(q, _) => qualifierIsIdent(q)
+      case _            => false
+    }
+
     cas match {
       case UnApply(fun, _, pats) if
           fun.symbol.name != nme.unapplySeq
           && pats.forall(alwaysMatches) =>
         narrowedType
-      case id: Ident if !untpd.isVarPattern(id)  => narrowedType
-      case Bind(_, pat)                          => narrowType(target, pat)
-      case Typed(pat @ UnApply(_, _, _), _)      => narrowType(target, pat)
-      case Typed(pat, tpt) if alwaysMatches(pat) => narrowedType
-      case _ if alwaysMatches(cas)           => defn.NothingType
+      case id: Ident if !untpd.isVarPattern(id)   => narrowedType
+      case Select(q, name) if qualifierIsIdent(q) => narrowedType
+      case Bind(_, pat)                           => narrowType(target, pat)
+      case Typed(pat @ UnApply(_, _, _), _)       => narrowType(target, pat)
+      case Typed(pat, tpt) if alwaysMatches(pat)  => narrowedType
+      case _ if alwaysMatches(cas)                => defn.NothingType
       case _ => target
     }
+  }
 
   /**
     * Decompose a class type into its children.
